@@ -32,19 +32,6 @@
             margin-bottom: 12px;
         }
 
-        .sync-btn {
-            background: #9D6FFF;
-            color: white;
-            border: none;
-            padding: 8px 18px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-        }
-
-        .sync-btn:hover { background: #8355e0; }
-        .sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
         .search-box {
             display: block;
             margin: 0 auto 20px;
@@ -189,7 +176,6 @@
         &middot; Synced: {{ last_sync[:19] }}
         {% endif %}
     </div>
-    <button class="sync-btn" id="sync-btn" onclick="triggerSync()">Sync</button>
 </div>
 
 <input class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)">
@@ -359,34 +345,6 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-async function triggerSync() {
-    const btn = document.getElementById("sync-btn");
-    btn.disabled = true;
-    btn.innerText = "Syncing...";
-    showLoader("Syncing new images...");
-
-    try {
-        const res = await fetch("/api/sync", { method: "POST" });
-        const data = await res.json();
-
-        if (data.ok) {
-            document.getElementById("status-text").innerText = data.total + " images";
-            // Re-fetch updated first batch after sync
-            const imgRes = await fetch("/api/images?offset=0");
-            const imgData = await imgRes.json();
-            currentList = imgData;
-            offset = imgData.length;
-            renderImages(imgData);
-        } else {
-            alert("Sync failed: " + data.error);
-        }
-    } catch (e) {
-        alert("Sync error: " + e.message);
-    }
-
-    btn.disabled = false;
-    btn.innerText = "Sync";
-}
 </script>
 
 </body>
