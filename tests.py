@@ -282,6 +282,48 @@ class TestFlaskRoutes(unittest.TestCase):
         finally:
             flask_app.SYNC_TOKEN = original
 
+    def test_categories_endpoint_returns_list(self):
+        res = self.client.get("/api/categories")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIsInstance(data, list)
+        # Each entry must have required keys
+        for cat in data:
+            self.assertIn("name", cat)
+            self.assertIn("icon", cat)
+            self.assertIn("count", cat)
+
+    def test_categories_counts_match_cache(self):
+        # Inject posts with known categories
+        with flask_app._cache_lock:
+            flask_app._ALL_POSTS = [
+                {"id": 1, "title": "A", "category": "Meetings", "ext": "jpg"},
+                {"id": 2, "title": "B", "category": "Meetings", "ext": "jpg"},
+                {"id": 3, "title": "C", "category": "Productivity", "ext": "jpg"},
+            ]
+        res = self.client.get("/api/categories")
+        data = res.get_json()
+        counts = {c["name"]: c["count"] for c in data}
+        self.assertEqual(counts.get("Meetings"), 2)
+        self.assertEqual(counts.get("Productivity"), 1)
+
+    def test_category_filter_endpoint(self):
+        with flask_app._cache_lock:
+            flask_app._ALL_POSTS = [
+                {"id": 1, "title": "A", "category": "Meetings", "ext": "jpg"},
+                {"id": 2, "title": "B", "category": "Productivity", "ext": "jpg"},
+            ]
+        res = self.client.get("/api/category/Meetings")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["category"], "Meetings")
+
+    def test_category_filter_unknown_returns_empty(self):
+        res = self.client.get("/api/category/DoesNotExist")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), [])
+
 
 # ---------------------------------------------------------------------------
 # image_downloader.py — safe_get() retry logic
@@ -369,6 +411,40 @@ class TestLoadMetadata(unittest.TestCase):
         ):
             with self.assertRaises(json.JSONDecodeError):
                 image_downloader.load_metadata()
+
+
+# ---------------------------------------------------------------------------
+# app.py — /all route
+# ---------------------------------------------------------------------------
+
+
+class TestAllRoute(unittest.TestCase):
+    def setUp(self):
+        flask_app.app.config["TESTING"] = True
+        self.client = flask_app.app.test_client()
+        with flask_app._cache_lock:
+            flask_app._ALL_POSTS = _sorted_sample_posts()
+
+    def tearDown(self):
+        with flask_app._cache_lock:
+            flask_app._ALL_POSTS = []
+
+    def test_all_route_returns_200(self):
+        res = self.client.get("/all")
+        self.assertEqual(res.status_code, 200)
+
+    def test_all_route_contains_r2_base_url(self):
+        res = self.client.get("/all")
+        self.assertIn(b"cdn.example.com", res.data)
+
+    def test_all_route_shows_total_count(self):
+        res = self.client.get("/all")
+        # Template renders "All 2 comics" with our 2-post sample cache
+        self.assertIn(b"2", res.data)
+
+    def test_index_has_link_to_all(self):
+        res = self.client.get("/")
+        self.assertIn(b"/all", res.data)
 
 
 if __name__ == "__main__":

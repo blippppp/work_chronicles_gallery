@@ -10,6 +10,7 @@ import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
 import requests
+from categories import categorize
 
 load_dotenv()
 
@@ -272,6 +273,7 @@ def process_posts(posts, existing_metadata=None):
                     "post_date": post.get("post_date", ""),
                     "canonical_url": post.get("canonical_url", ""),
                     "ext": ext,
+                    "category": categorize(title),
                 }
                 uploaded += 1
                 log.info("[%d/%d] Uploaded: %s", done_count, total, title)

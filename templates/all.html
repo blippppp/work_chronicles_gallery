@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Work Chronicles Gallery</title>
+    <title>All Comics — Work Chronicles Gallery</title>
 
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -70,116 +70,6 @@
 
         .search-box:focus {
             border-color: #555;
-        }
-
-        /* Category cards */
-        .categories-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            gap: 16px;
-            max-width: 1100px;
-            margin: 0 auto;
-        }
-
-        @media (max-width: 767px) {
-            .categories-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 10px;
-            }
-        }
-
-        .category-card {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
-            border-radius: 12px;
-            padding: 20px 16px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            text-align: center;
-        }
-
-        .category-card:hover {
-            background: #222;
-            border-color: #444;
-            transform: translateY(-2px);
-        }
-
-        .category-card .cat-icon {
-            font-size: 32px;
-            margin-bottom: 10px;
-            display: block;
-        }
-
-        .category-card .cat-name {
-            font-size: 15px;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .category-card .cat-count {
-            font-size: 12px;
-            color: #666;
-        }
-
-        .category-card .cat-desc {
-            font-size: 11px;
-            color: #555;
-            margin-top: 6px;
-            line-height: 1.3;
-        }
-
-        /* Gallery grid (category view) */
-        .gallery-view {
-            display: none;
-        }
-
-        .gallery-view.active {
-            display: block;
-        }
-
-        .categories-view {
-            display: block;
-        }
-
-        .categories-view.hidden {
-            display: none;
-        }
-
-        .view-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 20px;
-            max-width: 1100px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .back-btn {
-            background: #1a1a1a;
-            border: 1px solid #333;
-            color: white;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-            white-space: nowrap;
-        }
-
-        .back-btn:hover {
-            background: #222;
-            border-color: #555;
-        }
-
-        .view-title {
-            font-size: 20px;
-            font-weight: 600;
-        }
-
-        .view-count {
-            color: #666;
-            font-size: 14px;
         }
 
         .grid {
@@ -319,29 +209,16 @@
 
 <div class="header">
     <h1>Work Chronicles Gallery</h1>
-    <p>Browse comics by category or search by title</p>
+    <p id="subtitle">All {{ total }} comics</p>
     <div class="header-nav">
-        <a href="/all" target="_blank" rel="noopener">All comics (infinite scroll) &#8599;</a>
+        <a href="/">&#8592; Browse by category</a>
     </div>
 </div>
 
 <input type="text" class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)" aria-label="Search by title">
 
-<!-- Categories View -->
-<div class="categories-view" id="categories-view">
-    <div class="categories-grid" id="categories-grid"></div>
-</div>
-
-<!-- Gallery View (shown when a category is selected) -->
-<div class="gallery-view" id="gallery-view">
-    <div class="view-header">
-        <button class="back-btn" onclick="showCategories()">&#8592; Categories</button>
-        <span class="view-title" id="view-title"></span>
-        <span class="view-count" id="view-count"></span>
-    </div>
-    <div class="grid" id="gallery"></div>
-    <div class="loader" id="loader">Loading...</div>
-</div>
+<div class="grid" id="gallery"></div>
+<div class="loader" id="loader">Loading...</div>
 
 <div id="modal" class="modal">
     <span class="nav-btn prev" onclick="prevImage()">&#10094;</span>
@@ -351,69 +228,35 @@
 
 <script>
 const R2_BASE_URL = {{ r2_base_url | tojson }};
+const BATCH_SIZE = 40;
+
+let offset = 0;
 let loading = false;
-let currentList = [];
-let currentIndex = 0;
+let exhausted = false;
 let searchMode = false;
 let debounceTimer;
+
+// In search mode these hold the full search result list and the current index.
 let _searchList = null;
+// In normal mode the "current list" is everything loaded so far (for modal nav).
+let _loadedPosts = [];
+// Modal state
+let currentIndex = 0;
 
-// Categories
-let categories = [];
-
-async function loadCategories() {
-    const res = await fetch("/api/categories");
-    categories = await res.json();
-    renderCategories();
+function _activeList() {
+    return searchMode && _searchList !== null ? _searchList : _loadedPosts;
 }
 
-function renderCategories() {
-    const grid = document.getElementById("categories-grid");
-    grid.innerHTML = "";
-    categories.forEach(cat => {
-        if (cat.count === 0) return;
-        const card = document.createElement("div");
-        card.className = "category-card";
-        card.onclick = () => openCategory(cat.name);
-        card.innerHTML = `
-            <span class="cat-icon">${cat.icon}</span>
-            <div class="cat-name">${cat.name}</div>
-            <div class="cat-count">${cat.count} comics</div>
-            <div class="cat-desc">${cat.description}</div>
-        `;
-        grid.appendChild(card);
-    });
-}
-
-async function openCategory(name) {
-    showLoader("Loading...");
-    const res = await fetch(`/api/category/${encodeURIComponent(name)}`);
-    const posts = await res.json();
-    currentList = posts;
-    document.getElementById("categories-view").classList.add("hidden");
-    document.getElementById("gallery-view").classList.add("active");
-    document.getElementById("view-title").textContent = name;
-    document.getElementById("view-count").textContent = `(${posts.length} comics)`;
-    renderImages(posts);
-    hideLoader();
-}
-
-function showCategories() {
-    document.getElementById("categories-view").classList.remove("hidden");
-    document.getElementById("gallery-view").classList.remove("active");
-    currentList = [];
-    searchMode = false;
-    _searchList = null;
-    document.querySelector(".search-box").value = "";
-}
+// ---- rendering ----
 
 function renderImages(posts, append = false) {
     const gallery = document.getElementById("gallery");
-    if (!append) gallery.innerHTML = "";
-
-    if (posts.length === 0) {
-        gallery.innerHTML = '<div class="no-results">No comics found.</div>';
-        return;
+    if (!append) {
+        gallery.innerHTML = "";
+        if (posts.length === 0) {
+            gallery.innerHTML = '<div class="no-results">No comics found.</div>';
+            return;
+        }
     }
 
     posts.forEach(post => {
@@ -441,49 +284,72 @@ function renderImages(posts, append = false) {
     });
 }
 
-function showLoader(text) {
-    const loader = document.getElementById("loader");
-    loader.style.display = "block";
-    loader.innerText = text;
+// ---- infinite scroll ----
+
+async function loadNextBatch() {
+    if (loading || exhausted || searchMode) return;
+    loading = true;
+    showLoader("Loading...");
+
+    try {
+        const res = await fetch(`/api/images?offset=${offset}`);
+        const batch = await res.json();
+        if (batch.length === 0) {
+            exhausted = true;
+        } else {
+            _loadedPosts = _loadedPosts.concat(batch);
+            renderImages(batch, /* append= */ true);
+            offset += batch.length;
+            if (batch.length < BATCH_SIZE) exhausted = true;
+        }
+    } catch (e) {
+        console.error("Load failed:", e);
+    }
+
+    hideLoader();
+    loading = false;
 }
 
-function hideLoader() {
-    document.getElementById("loader").style.display = "none";
+function onScroll() {
+    if (searchMode || exhausted || loading) return;
+    const scrollBottom = window.scrollY + window.innerHeight;
+    const pageHeight = document.documentElement.scrollHeight;
+    if (pageHeight - scrollBottom < 400) {
+        loadNextBatch();
+    }
 }
+
+window.addEventListener("scroll", onScroll, { passive: true });
+
+// ---- search ----
 
 function handleSearch(query) {
     clearTimeout(debounceTimer);
-
     debounceTimer = setTimeout(async () => {
+        const subtitle = document.getElementById("subtitle");
         if (!query) {
+            // Restore infinite-scroll mode
             searchMode = false;
             _searchList = null;
-            // If we're in a category view, restore it; otherwise show categories
-            if (document.getElementById("gallery-view").classList.contains("active")) {
-                // Stay in current category view but restore full list
-                const catName = document.getElementById("view-title").textContent;
-                openCategory(catName);
-            } else {
-                // Show categories
-            }
+            const gallery = document.getElementById("gallery");
+            gallery.innerHTML = "";
+            offset = 0;
+            exhausted = false;
+            _loadedPosts = [];
+            subtitle.textContent = "All {{ total }} comics";
+            await loadNextBatch();
             return;
         }
 
         searchMode = true;
         showLoader("Searching...");
 
-        // Show gallery view for search results
-        document.getElementById("categories-view").classList.add("hidden");
-        document.getElementById("gallery-view").classList.add("active");
-        document.getElementById("view-title").textContent = `Search: "${query}"`;
-
         try {
             const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-            const searchResults = await res.json();
-            _searchList = searchResults;
-            currentList = searchResults;
-            document.getElementById("view-count").textContent = `(${searchResults.length} results)`;
-            renderImages(searchResults);
+            const results = await res.json();
+            _searchList = results;
+            subtitle.textContent = `${results.length} result${results.length !== 1 ? "s" : ""} for "${query}"`;
+            renderImages(results, /* append= */ false);
         } catch (e) {
             console.error("Search failed:", e);
         }
@@ -492,9 +358,7 @@ function handleSearch(query) {
     }, 300);
 }
 
-function _activeList() {
-    return searchMode && _searchList !== null ? _searchList : currentList;
-}
+// ---- modal ----
 
 function openModal(post) {
     const list = _activeList();
@@ -529,9 +393,7 @@ function prevImage() {
 }
 
 document.getElementById("modal").onclick = function(e) {
-    if (e.target.id === "modal") {
-        this.style.display = "none";
-    }
+    if (e.target.id === "modal") this.style.display = "none";
 };
 
 document.addEventListener("keydown", (e) => {
@@ -542,8 +404,18 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
-// Initialize
-loadCategories();
+function showLoader(text) {
+    const loader = document.getElementById("loader");
+    loader.style.display = "block";
+    loader.innerText = text;
+}
+
+function hideLoader() {
+    document.getElementById("loader").style.display = "none";
+}
+
+// Boot
+loadNextBatch();
 </script>
 
 </body>

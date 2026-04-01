@@ -9,6 +9,7 @@ from flask import Flask, render_template, jsonify, request
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
+from categories import CATEGORIES, DEFAULT_CATEGORY
 
 load_dotenv()
 
@@ -123,12 +124,62 @@ def search_images():
     return jsonify(results[:200])
 
 
+@app.route("/api/categories")
+def get_categories():
+    """Return category metadata with counts."""
+    with _cache_lock:
+        counts: dict[str, int] = {}
+        for p in _ALL_POSTS:
+            cat = p.get("category", DEFAULT_CATEGORY)
+            counts[cat] = counts.get(cat, 0) + 1
+
+    result = []
+    for cat_name, cat_info in CATEGORIES.items():
+        result.append(
+            {
+                "name": cat_name,
+                "icon": cat_info["icon"],
+                "description": cat_info["description"],
+                "count": counts.get(cat_name, 0),
+            }
+        )
+
+    ann_count = counts.get("Announcements", 0)
+    if ann_count:
+        result.append(
+            {
+                "name": "Announcements",
+                "icon": "📢",
+                "description": "Calendar releases, milestones, and meta content",
+                "count": ann_count,
+            }
+        )
+
+    result.sort(key=lambda c: c["count"], reverse=True)
+    return jsonify(result)
+
+
+@app.route("/api/category/<name>")
+def get_category(name: str):
+    """Return all posts in a category."""
+    with _cache_lock:
+        results = [p for p in _ALL_POSTS if p.get("category", DEFAULT_CATEGORY) == name]
+    return jsonify(results)
+
+
 @app.route("/api/sync/status")
 def sync_status():
     """Returns current in-memory state — no R2 round-trip."""
     with _cache_lock:
         total = len(_ALL_POSTS)
     return jsonify({"total": total})
+
+
+@app.route("/all")
+def all_comics():
+    with _cache_lock:
+        total = len(_ALL_POSTS)
+    return render_template("all.html", r2_base_url=R2_PUBLIC_URL, total=total)
 
 
 @app.route("/api/sync", methods=["POST"])
