@@ -166,7 +166,7 @@
     <h2>Work Chronicles Gallery</h2>
 </div>
 
-<input class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)">
+<input type="text" class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)" aria-label="Search by title">
 
 <div class="grid" id="gallery"></div>
 
@@ -174,7 +174,7 @@
 
 <div id="modal" class="modal">
     <span class="nav-btn prev" onclick="prevImage()">&#10094;</span>
-    <img id="modal-img" alt="">
+    <img id="modal-img" alt="" aria-label="Post image">
     <span class="nav-btn next" onclick="nextImage()">&#10095;</span>
 </div>
 
@@ -184,6 +184,7 @@ const R2_BASE_URL = {{ r2_base_url | tojson }};
 const INITIAL_POSTS = {{ posts | tojson }};
 let offset = INITIAL_POSTS.length;
 let loading = false;
+let exhausted = false;  // true once all posts have been loaded
 let currentList = [];
 let currentIndex = 0;
 let searchMode = false;
@@ -215,6 +216,7 @@ function renderImages(posts, append = false) {
         const el = document.createElement("img");
         el.src = R2_BASE_URL + "/" + post.id + "." + (post.ext || "jpg");
         el.loading = "lazy";
+        el.alt = post.title;
         el.onclick = () => openModal(post);
 
         const tooltip = document.createElement("div");
@@ -233,27 +235,32 @@ function renderImages(posts, append = false) {
 }
 
 // Render the server-provided initial batch immediately — no fetch needed.
-currentList = INITIAL_POSTS;
+currentList = INITIAL_POSTS.slice();
 renderImages(INITIAL_POSTS);
 
 async function loadMore() {
-    if (loading || searchMode) return;
+    if (loading || exhausted || searchMode) return;
 
     loading = true;
     showLoader("Loading more...");
 
-    const res = await fetch(`/api/images?offset=${offset}`);
-    const data = await res.json();
+    try {
+        const res = await fetch(`/api/images?offset=${offset}`);
+        const data = await res.json();
 
-    if (data.length === 0) {
-        showLoader("End");
-        return;
+        if (data.length === 0) {
+            exhausted = true;
+            loading = false;
+            showLoader("End");
+            return;
+        }
+
+        renderImages(data, true);
+        currentList = currentList.concat(data);
+        offset += data.length;
+    } catch (e) {
+        console.error("loadMore failed:", e);
     }
-
-    renderImages(data, true);
-    currentList = currentList.concat(data);
-
-    offset += data.length;
 
     loading = false;
     hideLoader();
@@ -277,45 +284,67 @@ function handleSearch(query) {
     debounceTimer = setTimeout(async () => {
         if (!query) {
             searchMode = false;
-            currentList = INITIAL_POSTS;
-            offset = INITIAL_POSTS.length;
-            renderImages(INITIAL_POSTS);
+            // Restore the full scrolled list, not just the initial batch.
+            // currentList already contains everything loaded so far.
+            renderImages(currentList);
             return;
         }
 
         searchMode = true;
         showLoader("Searching...");
 
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-        const data = await res.json();
-
-        currentList = data;
-        renderImages(data);
+        try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+            const searchResults = await res.json();
+            renderImages(searchResults);
+            // Store search results in a temporary list for modal navigation.
+            // We do NOT overwrite currentList so that clearing the search
+            // restores the full scroll state.
+            _searchList = searchResults;
+        } catch (e) {
+            console.error("Search failed:", e);
+        }
 
         hideLoader();
-
     }, 300);
 }
 
+// Separate list for search results — keeps currentList (scroll state) intact.
+let _searchList = null;
+
+function _activeList() {
+    return searchMode && _searchList !== null ? _searchList : currentList;
+}
+
 function openModal(post) {
-    document.getElementById("modal").style.display = "flex";
-    currentIndex = currentList.findIndex(p => p.id === post.id);
+    const list = _activeList();
+    const idx = list.findIndex(p => p.id === post.id);
+    if (idx === -1 || list.length === 0) return;  // guard: post not in active list
+    currentIndex = idx;
     updateModal();
+    document.getElementById("modal").style.display = "flex";
 }
 
 function updateModal() {
-    const post = currentList[currentIndex];
-    document.getElementById("modal-img").src =
-        R2_BASE_URL + "/" + post.id + "." + (post.ext || "jpg");
+    const list = _activeList();
+    if (list.length === 0) return;
+    const post = list[currentIndex];
+    const img = document.getElementById("modal-img");
+    img.src = R2_BASE_URL + "/" + post.id + "." + (post.ext || "jpg");
+    img.alt = post.title;
 }
 
 function nextImage() {
-    currentIndex = (currentIndex + 1) % currentList.length;
+    const list = _activeList();
+    if (list.length === 0) return;
+    currentIndex = (currentIndex + 1) % list.length;
     updateModal();
 }
 
 function prevImage() {
-    currentIndex = (currentIndex - 1 + currentList.length) % currentList.length;
+    const list = _activeList();
+    if (list.length === 0) return;
+    currentIndex = (currentIndex - 1 + list.length) % list.length;
     updateModal();
 }
 

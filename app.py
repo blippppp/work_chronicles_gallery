@@ -14,14 +14,23 @@ load_dotenv()
 
 app = Flask(__name__)
 
-R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "")
+R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL", "").rstrip("/")
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_BUCKET = os.environ.get("R2_BUCKET", "work-chronicles-storage")
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")
 BATCH_SIZE = 40
-POSTS_KEY = "posts.json"  # shared constant — also used by image_downloader.py
+POSTS_KEY = "posts.json"  # must match METADATA_FILE in image_downloader.py
+
+# Warn loudly on startup if critical config is missing or insecure.
+if not R2_PUBLIC_URL:
+    app.logger.warning("R2_PUBLIC_URL is not set — all image URLs will be broken.")
+if not SYNC_TOKEN:
+    app.logger.warning(
+        "SYNC_TOKEN is not set — /api/sync is unauthenticated. "
+        "Set SYNC_TOKEN in your environment to protect this endpoint."
+    )
 
 s3 = boto3.client(
     "s3",
@@ -47,13 +56,18 @@ def load_posts() -> list:
 
     Raises ClientError for unexpected errors (non-NoSuchKey) so callers
     can decide how to handle them.
+    Raises json.JSONDecodeError if R2 returns corrupted data.
     """
     try:
         res = s3.get_object(Bucket=R2_BUCKET, Key=POSTS_KEY)
-        data = json.loads(res["Body"].read())
+        raw = res["Body"].read()
+        data = json.loads(raw)
         posts = list(data.get("posts", {}).values())
         posts.sort(key=lambda p: p.get("post_date", ""), reverse=True)
         return posts
+    except json.JSONDecodeError as e:
+        app.logger.error("posts.json is corrupted (invalid JSON): %s", e)
+        raise
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code == "NoSuchKey":
@@ -78,18 +92,22 @@ _refresh_cache()
 @app.route("/")
 def index():
     with _cache_lock:
-        posts = _ALL_POSTS
-    first_batch = posts[:BATCH_SIZE]
+        first_batch = _ALL_POSTS[:BATCH_SIZE]
+        total = len(_ALL_POSTS)
     return render_template(
         "index.html",
         posts=first_batch,
         r2_base_url=R2_PUBLIC_URL,
+        total=total,
     )
 
 
 @app.route("/api/images")
 def get_images_api():
-    offset = int(request.args.get("offset", 0))
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        return jsonify({"error": "offset must be an integer"}), 400
     with _cache_lock:
         batch = _ALL_POSTS[offset : offset + BATCH_SIZE]
     return jsonify(batch)
@@ -120,6 +138,10 @@ def trigger_sync():
         if provided != SYNC_TOKEN:
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
     try:
+        # NOTE: Gunicorn's default worker timeout is 30s. If the sync takes
+        # longer, Gunicorn will kill this worker before subprocess.run returns.
+        # Set --timeout on Gunicorn (e.g. gunicorn --timeout 180 app:app) if
+        # syncs are expected to run longer than 30 seconds.
         result = subprocess.run(
             [
                 sys.executable,
@@ -131,14 +153,24 @@ def trigger_sync():
             timeout=120,
         )
         if result.returncode != 0:
+            error_detail = (
+                result.stderr.strip()[-500:] or "Downloader exited with non-zero status"
+            )
+            app.logger.error("Sync subprocess failed: %s", error_detail)
+            return jsonify({"ok": False, "error": error_detail}), 500
+
+        try:
+            _refresh_cache()
+        except Exception as cache_err:
+            # Sync ran successfully but cache refresh failed — report both.
+            app.logger.error("Cache refresh after sync failed: %s", cache_err)
             return jsonify(
                 {
                     "ok": False,
-                    "error": result.stderr[-500:]
-                    or "Downloader exited with non-zero status",
+                    "error": f"Sync completed but cache refresh failed: {cache_err}",
                 }
             ), 500
-        _refresh_cache()
+
         with _cache_lock:
             total = len(_ALL_POSTS)
         return jsonify(
@@ -149,8 +181,9 @@ def trigger_sync():
             }
         )
     except Exception as e:
+        app.logger.error("Sync error: %s", e)
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1")
