@@ -326,6 +326,174 @@ class TestFlaskRoutes(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# app.py — /api/suggest
+# ---------------------------------------------------------------------------
+
+# A minimal fake search index: 3 entries with unit-length vectors in 4D space.
+_SUGGEST_ENTRIES = [
+    {
+        "id": 10,
+        "title": "Monday Meeting Madness",
+        "category": "Meetings",
+        "ext": "jpg",
+        "post_date": "2026-01-10",
+        "phrases": ["endless standup", "monday meeting"],
+        "vector": [1.0, 0.0, 0.0, 0.0],
+    },
+    {
+        "id": 20,
+        "title": "Deadline Panic",
+        "category": "Productivity",
+        "ext": "png",
+        "post_date": "2026-01-20",
+        "phrases": ["deadline looming", "last-minute rush"],
+        "vector": [0.0, 1.0, 0.0, 0.0],
+    },
+    {
+        "id": 30,
+        "title": "Coffee Run",
+        "category": "Office Life",
+        "ext": "jpg",
+        "post_date": "2026-01-30",
+        "phrases": ["morning coffee", "coffee break"],
+        "vector": [0.0, 0.0, 1.0, 0.0],
+    },
+]
+
+
+def _build_suggest_index():
+    """Return (entries, vectors) as load_search_index() would — pre-normalised."""
+    import numpy as np
+
+    entries = _SUGGEST_ENTRIES
+    vectors = np.array([e["vector"] for e in entries], dtype=np.float32)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1, norms)
+    vectors = vectors / norms
+    return entries, vectors
+
+
+class TestSuggestEndpoint(unittest.TestCase):
+    def setUp(self):
+        flask_app.app.config["TESTING"] = True
+        self.client = flask_app.app.test_client()
+
+    def _load_fake_index(self):
+        entries, vectors = _build_suggest_index()
+        with flask_app._cache_lock:
+            flask_app._SEARCH_INDEX = entries
+            flask_app._SEARCH_VECTORS = vectors
+
+    def _clear_index(self):
+        with flask_app._cache_lock:
+            flask_app._SEARCH_INDEX = []
+            flask_app._SEARCH_VECTORS = None
+
+    def tearDown(self):
+        self._clear_index()
+
+    def test_empty_query_returns_empty(self):
+        res = self.client.get("/api/suggest?q=")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), [])
+
+    def test_short_query_returns_empty(self):
+        res = self.client.get("/api/suggest?q=a")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), [])
+
+    def test_no_index_returns_empty(self):
+        self._clear_index()
+        # Even with a valid query and a working embed call, no index → []
+        with patch.object(flask_app, "_embed_query", return_value=[1.0, 0.0, 0.0, 0.0]):
+            res = self.client.get("/api/suggest?q=meeting")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), [])
+
+    def test_embed_failure_returns_empty(self):
+        self._load_fake_index()
+        with patch.object(flask_app, "_embed_query", return_value=None):
+            res = self.client.get("/api/suggest?q=meeting")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), [])
+
+    def test_returns_best_match_first(self):
+        self._load_fake_index()
+        # Query vector aligned with entry 0 ("Monday Meeting Madness")
+        with patch.object(flask_app, "_embed_query", return_value=[1.0, 0.0, 0.0, 0.0]):
+            res = self.client.get("/api/suggest?q=meeting")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertGreater(len(data), 0)
+        self.assertEqual(data[0]["id"], 10)
+        self.assertEqual(data[0]["title"], "Monday Meeting Madness")
+
+    def test_result_fields_present(self):
+        self._load_fake_index()
+        with patch.object(flask_app, "_embed_query", return_value=[1.0, 0.0, 0.0, 0.0]):
+            res = self.client.get("/api/suggest?q=meeting")
+        data = res.get_json()
+        self.assertGreater(len(data), 0)
+        for item in data:
+            for field in (
+                "id",
+                "title",
+                "category",
+                "ext",
+                "post_date",
+                "phrases",
+                "score",
+            ):
+                self.assertIn(
+                    field, item, f"Field '{field}' missing from suggest result"
+                )
+
+    def test_below_threshold_excluded(self):
+        self._load_fake_index()
+        # Vector orthogonal to all entries → cosine similarity = 0 for all
+        with patch.object(flask_app, "_embed_query", return_value=[0.0, 0.0, 0.0, 1.0]):
+            res = self.client.get("/api/suggest?q=zzznomatch")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data, [])
+
+    def test_suggest_limit_enforced(self):
+        # Build a large index so we can verify the cap
+        import numpy as np
+
+        n = flask_app.SUGGEST_LIMIT + 5
+        entries = [
+            {
+                "id": i,
+                "title": f"Comic {i}",
+                "category": "Test",
+                "ext": "jpg",
+                "post_date": "2026-01-01",
+                "phrases": [f"phrase {i}"],
+                "vector": [1.0, 0.0],
+            }
+            for i in range(n)
+        ]
+        vectors = np.array([[1.0, 0.0]] * n, dtype=np.float32)
+        with flask_app._cache_lock:
+            flask_app._SEARCH_INDEX = entries
+            flask_app._SEARCH_VECTORS = vectors
+
+        with patch.object(flask_app, "_embed_query", return_value=[1.0, 0.0]):
+            res = self.client.get("/api/suggest?q=comic")
+        data = res.get_json()
+        self.assertLessEqual(len(data), flask_app.SUGGEST_LIMIT)
+
+    def test_score_field_is_float(self):
+        self._load_fake_index()
+        with patch.object(flask_app, "_embed_query", return_value=[1.0, 0.0, 0.0, 0.0]):
+            res = self.client.get("/api/suggest?q=meeting")
+        data = res.get_json()
+        if data:
+            self.assertIsInstance(data[0]["score"], float)
+
+
+# ---------------------------------------------------------------------------
 # image_downloader.py — safe_get() retry logic
 # ---------------------------------------------------------------------------
 

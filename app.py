@@ -21,8 +21,12 @@ R2_BUCKET = os.environ.get("R2_BUCKET", "work-chronicles-storage")
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 SYNC_TOKEN = os.environ.get("SYNC_TOKEN", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 BATCH_SIZE = 40
 POSTS_KEY = "posts.json"  # must match METADATA_FILE in image_downloader.py
+SEARCH_INDEX_KEY = "search_index.json"
+SUGGEST_LIMIT = 6  # max suggestions returned
+SUGGEST_MIN_SCORE = 0.30  # cosine similarity threshold — below this, skip
 
 # Warn loudly on startup if critical config is missing or insecure.
 if not R2_PUBLIC_URL:
@@ -31,6 +35,10 @@ if not SYNC_TOKEN:
     app.logger.warning(
         "SYNC_TOKEN is not set — /api/sync is unauthenticated. "
         "Set SYNC_TOKEN in your environment to protect this endpoint."
+    )
+if not OPENAI_API_KEY:
+    app.logger.warning(
+        "OPENAI_API_KEY is not set — /api/suggest will return empty results."
     )
 
 s3 = boto3.client(
@@ -44,12 +52,16 @@ s3 = boto3.client(
     region_name="auto",
 )
 
-# In-memory cache protected by a lock.
-# Under Gunicorn multi-worker each worker has its own copy; sync updates it
-# within the worker that handled the request. Use a shared data store
-# (Redis / SQLite) if strict cross-worker consistency is required.
+# ── In-memory caches ──────────────────────────────────────────────────────────
+# Both protected by the same lock for simplicity.
 _cache_lock = threading.Lock()
 _ALL_POSTS: list = []
+
+# Search index: list of {"id", "title", "category", "ext", "post_date",
+#                         "phrases", "vector"} dicts; loaded once at startup.
+# _SEARCH_VECTORS is a parallel numpy array for fast cosine similarity.
+_SEARCH_INDEX: list = []
+_SEARCH_VECTORS = None  # numpy ndarray shape (N, dim), or None if unavailable
 
 
 def load_posts() -> list:
@@ -72,10 +84,48 @@ def load_posts() -> list:
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code == "NoSuchKey":
-            # Not yet synced — expected on first run.
             return []
         app.logger.error("R2 load_posts error (%s): %s", code, e)
         raise
+
+
+def load_search_index() -> tuple[list, object]:
+    """Load search_index.json from R2.
+
+    Returns (entries, vectors_ndarray). If the file doesn't exist or numpy
+    is unavailable, returns ([], None).
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        app.logger.warning("numpy not installed — AI suggestions disabled.")
+        return [], None
+
+    try:
+        res = s3.get_object(Bucket=R2_BUCKET, Key=SEARCH_INDEX_KEY)
+        data = json.loads(res["Body"].read())
+        entries = data.get("entries", [])
+        if not entries:
+            return [], None
+        vectors = np.array([e["vector"] for e in entries], dtype=np.float32)
+        # Pre-normalise so cosine similarity is just a dot product at query time
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        vectors = vectors / norms
+        app.logger.info("Loaded search index: %d entries.", len(entries))
+        return entries, vectors
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code == "NoSuchKey":
+            app.logger.info(
+                "search_index.json not found — run embed_search.py to enable AI suggestions."
+            )
+        else:
+            app.logger.warning("Could not load search index (%s): %s", code, e)
+        return [], None
+    except Exception as e:
+        app.logger.warning("Could not load search index: %s", e)
+        return [], None
 
 
 def _refresh_cache() -> None:
@@ -86,8 +136,42 @@ def _refresh_cache() -> None:
         _ALL_POSTS = posts
 
 
-# Populate cache at startup (errors here are intentionally fatal).
+def _refresh_search_index() -> None:
+    """Re-read search_index.json from R2 and update the in-memory cache."""
+    entries, vectors = load_search_index()
+    with _cache_lock:
+        global _SEARCH_INDEX, _SEARCH_VECTORS
+        _SEARCH_INDEX = entries
+        _SEARCH_VECTORS = vectors
+
+
+# Populate caches at startup.
 _refresh_cache()
+_refresh_search_index()
+
+
+# ── Embedding helper ──────────────────────────────────────────────────────────
+
+
+def _embed_query(query: str) -> "list[float] | None":
+    """Embed a single query string via OpenAI. Returns None on failure."""
+    if not OPENAI_API_KEY:
+        return None
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        resp = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=[query],
+        )
+        return resp.data[0].embedding
+    except Exception as e:
+        app.logger.warning("Embedding query failed: %s", e)
+        return None
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @app.route("/")
@@ -101,6 +185,13 @@ def index():
         r2_base_url=R2_PUBLIC_URL,
         total=total,
     )
+
+
+@app.route("/all")
+def all_comics():
+    with _cache_lock:
+        total = len(_ALL_POSTS)
+    return render_template("all.html", r2_base_url=R2_PUBLIC_URL, total=total)
 
 
 @app.route("/api/images")
@@ -122,6 +213,74 @@ def search_images():
     with _cache_lock:
         results = [p for p in _ALL_POSTS if query in p.get("title", "").lower()]
     return jsonify(results[:200])
+
+
+@app.route("/api/suggest")
+def suggest():
+    """AI-powered search suggestions using cosine similarity on pre-computed embeddings.
+
+    Returns up to SUGGEST_LIMIT comic entries ranked by semantic similarity
+    to the query. Each entry includes id, title, category, ext, post_date,
+    and the matched phrases — so the frontend can show rich suggestion cards.
+
+    Falls back gracefully to empty list if the index isn't loaded or the
+    embedding call fails.
+    """
+    query = request.args.get("q", "").strip()
+    if not query or len(query) < 2:
+        return jsonify([])
+
+    with _cache_lock:
+        index = _SEARCH_INDEX
+        vectors = _SEARCH_VECTORS
+
+    if not index or vectors is None:
+        return jsonify([])
+
+    # Embed the query
+    q_vec = _embed_query(query)
+    if q_vec is None:
+        return jsonify([])
+
+    try:
+        import numpy as np
+
+        q_arr = np.array(q_vec, dtype=np.float32)
+        q_norm = np.linalg.norm(q_arr)
+        if q_norm == 0:
+            return jsonify([])
+        q_arr = q_arr / q_norm
+
+        # Cosine similarity = dot product (vectors already normalised)
+        scores = vectors @ q_arr  # type: ignore[operator]  # shape (N,)
+        top_indices = scores.argsort()[::-1][
+            : SUGGEST_LIMIT * 3
+        ]  # over-fetch, then filter
+
+        results = []
+        for idx in top_indices:
+            score = float(scores[idx])
+            if score < SUGGEST_MIN_SCORE:
+                break
+            entry = index[idx]
+            results.append(
+                {
+                    "id": entry["id"],
+                    "title": entry["title"],
+                    "category": entry.get("category", ""),
+                    "ext": entry.get("ext", "jpg"),
+                    "post_date": entry.get("post_date", ""),
+                    "phrases": entry.get("phrases", []),
+                    "score": round(score, 3),
+                }
+            )
+            if len(results) >= SUGGEST_LIMIT:
+                break
+
+        return jsonify(results)
+    except Exception as e:
+        app.logger.warning("Suggest scoring failed: %s", e)
+        return jsonify([])
 
 
 @app.route("/api/categories")
@@ -175,13 +334,6 @@ def sync_status():
     return jsonify({"total": total})
 
 
-@app.route("/all")
-def all_comics():
-    with _cache_lock:
-        total = len(_ALL_POSTS)
-    return render_template("all.html", r2_base_url=R2_PUBLIC_URL, total=total)
-
-
 @app.route("/api/sync", methods=["POST"])
 def trigger_sync():
     if SYNC_TOKEN:
@@ -213,7 +365,6 @@ def trigger_sync():
         try:
             _refresh_cache()
         except Exception as cache_err:
-            # Sync ran successfully but cache refresh failed — report both.
             app.logger.error("Cache refresh after sync failed: %s", cache_err)
             return jsonify(
                 {

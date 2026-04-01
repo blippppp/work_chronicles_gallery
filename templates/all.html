@@ -54,22 +54,214 @@
             border-color: #555;
         }
 
-        .search-box {
-            display: block;
+        /* ── Search ─────────────────────────────────────────────────────── */
+
+        .search-wrap {
+            position: relative;
+            width: min(480px, 90%);
             margin: 0 auto 24px;
-            padding: 12px 16px;
-            width: min(400px, 90%);
-            border-radius: 10px;
-            border: 1px solid #333;
+        }
+
+        .search-input-row {
+            display: flex;
+            align-items: center;
             background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 0 14px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .search-input-row:focus-within {
+            border-color: #555;
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.04);
+        }
+
+        .search-icon {
+            color: #555;
+            font-size: 15px;
+            flex-shrink: 0;
+            margin-right: 8px;
+            pointer-events: none;
+        }
+
+        .search-box {
+            flex: 1;
+            padding: 12px 0;
+            border: none;
+            background: transparent;
             color: white;
             font-size: 15px;
             outline: none;
-            transition: border-color 0.2s;
         }
 
-        .search-box:focus {
-            border-color: #555;
+        .search-box::placeholder { color: #555; }
+
+        .search-clear {
+            background: none;
+            border: none;
+            color: #555;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+            display: none;
+            flex-shrink: 0;
+        }
+
+        .search-clear:hover { color: #aaa; }
+
+        .search-clear.visible { display: block; }
+
+        /* ── Suggestion dropdown ────────────────────────────────────────── */
+
+        .suggest-dropdown {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            background: #181818;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            overflow: hidden;
+            z-index: 200;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            display: none;
+        }
+
+        .suggest-dropdown.open { display: block; }
+
+        .suggest-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px 6px;
+            border-bottom: 1px solid #222;
+        }
+
+        .ai-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 1px solid #2a2a5a;
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 10px;
+            font-weight: 600;
+            color: #7a9fff;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .ai-badge-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #7a9fff;
+            animation: ai-pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes ai-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+
+        .suggest-label {
+            font-size: 11px;
+            color: #444;
+        }
+
+        .suggest-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            cursor: pointer;
+            transition: background 0.15s;
+            border-bottom: 1px solid #1e1e1e;
+        }
+
+        .suggest-item:last-child { border-bottom: none; }
+
+        .suggest-item:hover,
+        .suggest-item.active {
+            background: #222;
+        }
+
+        .suggest-thumb {
+            width: 48px;
+            height: 36px;
+            border-radius: 5px;
+            object-fit: cover;
+            flex-shrink: 0;
+            background: #2a2a2a;
+        }
+
+        .suggest-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .suggest-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #ddd;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .suggest-phrase {
+            font-size: 11px;
+            color: #666;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .suggest-phrase em {
+            color: #7a9fff;
+            font-style: normal;
+        }
+
+        .suggest-cat {
+            font-size: 10px;
+            color: #555;
+            background: #222;
+            border: 1px solid #2a2a2a;
+            border-radius: 3px;
+            padding: 1px 5px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .suggest-thinking {
+            padding: 12px 14px;
+            font-size: 12px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .suggest-thinking-dots span {
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #555;
+            margin: 0 1px;
+            animation: dot-bounce 1.2s ease-in-out infinite;
+        }
+
+        .suggest-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .suggest-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes dot-bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-4px); }
         }
 
         .grid {
@@ -215,7 +407,24 @@
     </div>
 </div>
 
-<input type="text" class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)" aria-label="Search by title">
+<!-- Search with AI suggestion dropdown -->
+<div class="search-wrap" id="search-wrap">
+    <div class="search-input-row">
+        <span class="search-icon">&#128269;</span>
+        <input
+            type="text"
+            class="search-box"
+            id="search-box"
+            placeholder="Search or describe a comic..."
+            autocomplete="off"
+            aria-label="Search comics"
+            oninput="handleSearchInput(this.value)"
+            onkeydown="handleSearchKey(event)"
+        >
+        <button class="search-clear" id="search-clear" onclick="clearSearch()" aria-label="Clear search">&#10005;</button>
+    </div>
+    <div class="suggest-dropdown" id="suggest-dropdown"></div>
+</div>
 
 <div class="grid" id="gallery"></div>
 <div class="loader" id="loader">Loading...</div>
@@ -234,20 +443,24 @@ let offset = 0;
 let loading = false;
 let exhausted = false;
 let searchMode = false;
-let debounceTimer;
-
-// In search mode these hold the full search result list and the current index.
 let _searchList = null;
-// In normal mode the "current list" is everything loaded so far (for modal nav).
 let _loadedPosts = [];
-// Modal state
 let currentIndex = 0;
+
+// ── Suggestion state ──────────────────────────────────────────────────────
+let suggestTimer = null;
+let suggestAbort = null;
+let activeIdx = -1;
+let currentSuggestions = [];
+
+// ── Debounce timers ───────────────────────────────────────────────────────
+let _searchDebounce = null;
 
 function _activeList() {
     return searchMode && _searchList !== null ? _searchList : _loadedPosts;
 }
 
-// ---- rendering ----
+// ── Rendering ─────────────────────────────────────────────────────────────
 
 function renderImages(posts, append = false) {
     const gallery = document.getElementById("gallery");
@@ -284,7 +497,7 @@ function renderImages(posts, append = false) {
     });
 }
 
-// ---- infinite scroll ----
+// ── Infinite scroll ───────────────────────────────────────────────────────
 
 async function loadNextBatch() {
     if (loading || exhausted || searchMode) return;
@@ -321,49 +534,222 @@ function onScroll() {
 
 window.addEventListener("scroll", onScroll, { passive: true });
 
-// ---- search ----
+// ── Search ────────────────────────────────────────────────────────────────
 
-function handleSearch(query) {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-        const subtitle = document.getElementById("subtitle");
-        if (!query) {
-            // Restore infinite-scroll mode
-            searchMode = false;
-            _searchList = null;
-            const gallery = document.getElementById("gallery");
-            gallery.innerHTML = "";
-            offset = 0;
-            exhausted = false;
-            _loadedPosts = [];
-            subtitle.textContent = "All {{ total }} comics";
-            await loadNextBatch();
-            return;
-        }
+function handleSearchInput(query) {
+    document.getElementById("search-clear").classList.toggle("visible", query.length > 0);
 
-        searchMode = true;
-        showLoader("Searching...");
+    // Suggestions: debounce 350ms, min 2 chars
+    clearTimeout(suggestTimer);
+    if (query.length >= 2) {
+        showThinking();
+        suggestTimer = setTimeout(() => fetchSuggestions(query), 350);
+    } else {
+        closeSuggestions();
+    }
 
-        try {
-            const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-            const results = await res.json();
-            _searchList = results;
-            subtitle.textContent = `${results.length} result${results.length !== 1 ? "s" : ""} for "${query}"`;
-            renderImages(results, /* append= */ false);
-        } catch (e) {
-            console.error("Search failed:", e);
-        }
-
-        hideLoader();
-    }, 300);
+    // Gallery search: debounce 500ms
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => runSearch(query), 500);
 }
 
-// ---- modal ----
+async function runSearch(query) {
+    const subtitle = document.getElementById("subtitle");
+    if (!query) {
+        searchMode = false;
+        _searchList = null;
+        const gallery = document.getElementById("gallery");
+        gallery.innerHTML = "";
+        offset = 0;
+        exhausted = false;
+        _loadedPosts = [];
+        subtitle.textContent = "All {{ total }} comics";
+        await loadNextBatch();
+        return;
+    }
+
+    searchMode = true;
+    showLoader("Searching...");
+
+    try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const results = await res.json();
+        _searchList = results;
+        subtitle.textContent = `${results.length} result${results.length !== 1 ? "s" : ""} for "${query}"`;
+        renderImages(results, /* append= */ false);
+    } catch (e) {
+        console.error("Search failed:", e);
+    }
+
+    hideLoader();
+}
+
+function clearSearch() {
+    const box = document.getElementById("search-box");
+    box.value = "";
+    box.focus();
+    document.getElementById("search-clear").classList.remove("visible");
+    closeSuggestions();
+    clearTimeout(_searchDebounce);
+    runSearch("");
+}
+
+// ── AI Suggestions ────────────────────────────────────────────────────────
+
+function showThinking() {
+    const dd = document.getElementById("suggest-dropdown");
+    dd.innerHTML = `
+        <div class="suggest-header">
+            <span class="ai-badge"><span class="ai-badge-dot"></span>AI</span>
+            <span class="suggest-label">thinking&hellip;</span>
+        </div>
+        <div class="suggest-thinking">
+            <div class="suggest-thinking-dots">
+                <span></span><span></span><span></span>
+            </div>
+        </div>
+    `;
+    dd.classList.add("open");
+    activeIdx = -1;
+}
+
+async function fetchSuggestions(query) {
+    if (suggestAbort) suggestAbort.abort();
+    suggestAbort = new AbortController();
+
+    try {
+        const res = await fetch(
+            `/api/suggest?q=${encodeURIComponent(query)}`,
+            { signal: suggestAbort.signal }
+        );
+        const suggestions = await res.json();
+        currentSuggestions = suggestions;
+        renderSuggestions(query, suggestions);
+    } catch (e) {
+        if (e.name !== "AbortError") {
+            closeSuggestions();
+        }
+    }
+}
+
+function bestPhrase(suggestion, query) {
+    const q = query.toLowerCase();
+    const phrases = suggestion.phrases || [];
+    if (!phrases.length) return "";
+    let best = phrases[0];
+    let bestScore = 0;
+    for (const p of phrases) {
+        const words = q.split(/\s+/);
+        const score = words.filter(w => p.toLowerCase().includes(w)).length;
+        if (score > bestScore) { bestScore = score; best = p; }
+    }
+    return best;
+}
+
+function highlightMatch(phrase, query) {
+    let result = phrase;
+    const words = query.trim().split(/\s+/).filter(Boolean);
+    for (const word of words) {
+        const re = new RegExp(`(${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+        result = result.replace(re, "<em>$1</em>");
+    }
+    return result;
+}
+
+function renderSuggestions(query, suggestions) {
+    const dd = document.getElementById("suggest-dropdown");
+
+    if (!suggestions.length) {
+        closeSuggestions();
+        return;
+    }
+
+    let html = `
+        <div class="suggest-header">
+            <span class="ai-badge"><span class="ai-badge-dot"></span>AI</span>
+            <span class="suggest-label">semantic matches</span>
+        </div>
+    `;
+
+    suggestions.forEach((s, i) => {
+        const phrase = bestPhrase(s, query);
+        const highlighted = phrase ? highlightMatch(phrase, query) : "";
+        const thumb = `${R2_BASE_URL}/${s.id}.${s.ext || "jpg"}`;
+        html += `
+            <div class="suggest-item" data-idx="${i}" onmousedown="selectSuggestion(${i})">
+                <img class="suggest-thumb" src="${thumb}" alt="" loading="lazy">
+                <div class="suggest-text">
+                    <div class="suggest-title">${escapeHtml(s.title)}</div>
+                    ${highlighted ? `<div class="suggest-phrase">${highlighted}</div>` : ""}
+                </div>
+                ${s.category ? `<span class="suggest-cat">${escapeHtml(s.category)}</span>` : ""}
+            </div>
+        `;
+    });
+
+    dd.innerHTML = html;
+    dd.classList.add("open");
+    activeIdx = -1;
+}
+
+function closeSuggestions() {
+    const dd = document.getElementById("suggest-dropdown");
+    dd.classList.remove("open");
+    dd.innerHTML = "";
+    activeIdx = -1;
+    currentSuggestions = [];
+}
+
+function selectSuggestion(idx) {
+    const s = currentSuggestions[idx];
+    if (!s) return;
+    closeSuggestions();
+    openModal(s);
+}
+
+function handleSearchKey(e) {
+    const items = document.querySelectorAll(".suggest-item");
+    if (!items.length) return;
+
+    if (e.key === "ArrowDown") {
+        e.preventDefault();
+        activeIdx = Math.min(activeIdx + 1, items.length - 1);
+        updateActiveItem(items);
+    } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        activeIdx = Math.max(activeIdx - 1, -1);
+        updateActiveItem(items);
+    } else if (e.key === "Enter" && activeIdx >= 0) {
+        e.preventDefault();
+        selectSuggestion(activeIdx);
+    } else if (e.key === "Escape") {
+        closeSuggestions();
+    }
+}
+
+function updateActiveItem(items) {
+    items.forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+}
+
+// Close dropdown when clicking outside
+document.addEventListener("mousedown", (e) => {
+    if (!document.getElementById("search-wrap").contains(e.target)) {
+        closeSuggestions();
+    }
+});
+
+// ── Modal ─────────────────────────────────────────────────────────────────
 
 function openModal(post) {
     const list = _activeList();
-    const idx = list.findIndex(p => p.id === post.id);
-    if (idx === -1 || list.length === 0) return;
+    let idx = list.findIndex(p => p.id === post.id);
+    if (idx === -1) {
+        // Post from suggestion not in current list — show it alone
+        _loadedPosts = [post];
+        searchMode = false;
+        _searchList = null;
+        idx = 0;
+    }
     currentIndex = idx;
     updateModal();
     document.getElementById("modal").style.display = "flex";
@@ -404,6 +790,8 @@ document.addEventListener("keydown", (e) => {
     }
 });
 
+// ── Loader / utils ────────────────────────────────────────────────────────
+
 function showLoader(text) {
     const loader = document.getElementById("loader");
     loader.style.display = "block";
@@ -414,7 +802,11 @@ function hideLoader() {
     document.getElementById("loader").style.display = "none";
 }
 
-// Boot
+function escapeHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
 loadNextBatch();
 </script>
 
