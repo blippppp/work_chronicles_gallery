@@ -1,0 +1,271 @@
+"""Tests for work_chronicles_gallery.
+
+Run with:
+    pytest tests.py -v
+"""
+
+import json
+import os
+import unittest
+from unittest.mock import MagicMock, patch
+
+# Provide dummy env vars before importing app so it doesn't crash on startup.
+os.environ.setdefault("R2_ACCOUNT_ID", "test-account")
+os.environ.setdefault("R2_BUCKET", "test-bucket")
+os.environ.setdefault("R2_ACCESS_KEY", "test-key")
+os.environ.setdefault("R2_SECRET_KEY", "test-secret")
+os.environ.setdefault("R2_PUBLIC_URL", "https://cdn.example.com")
+os.environ.setdefault("SYNC_TOKEN", "")
+
+from botocore.exceptions import ClientError as _ClientError
+
+
+def _no_such_key(*args, **kwargs):
+    """Simulate R2 returning NoSuchKey — used during module-level _refresh_cache()."""
+    raise _ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}, "GetObject"
+    )
+
+
+# Patch s3.get_object before app is imported so _refresh_cache() at module level
+# doesn't make a real network call with dummy credentials.
+with patch("boto3.client") as mock_boto:
+    mock_s3 = MagicMock()
+    mock_s3.get_object.side_effect = _no_such_key
+    mock_boto.return_value = mock_s3
+    import app as flask_app  # noqa: E402
+    import image_downloader  # noqa: E402
+
+# After import, restore the real s3 client reference on the module so individual
+# tests can patch it cleanly via patch.object(flask_app.s3, ...).
+flask_app.s3 = mock_s3
+image_downloader.s3 = mock_s3
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+SAMPLE_POSTS = {
+    "last_sync": "2026-01-01T00:00:00+00:00",
+    "posts": {
+        "2": {
+            "id": 2,
+            "title": "Second Post",
+            "slug": "second",
+            "post_date": "2026-01-02",
+            "canonical_url": "",
+            "ext": "png",
+        },
+        "1": {
+            "id": 1,
+            "title": "First Post",
+            "slug": "first",
+            "post_date": "2026-01-01",
+            "canonical_url": "",
+            "ext": "png",
+        },
+    },
+}
+
+
+def _make_r2_response(data: dict):
+    """Return a mock boto3 get_object response with the given JSON payload."""
+    body = MagicMock()
+    body.read.return_value = json.dumps(data).encode()
+    return {"Body": body}
+
+
+# ---------------------------------------------------------------------------
+# app.py — load_posts()
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPosts(unittest.TestCase):
+    def test_returns_sorted_posts_newest_first(self):
+        with patch.object(
+            flask_app.s3, "get_object", return_value=_make_r2_response(SAMPLE_POSTS)
+        ):
+            posts, last_sync = flask_app.load_posts()
+
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0]["id"], 2, "Newest post should come first")
+        self.assertEqual(posts[1]["id"], 1)
+        self.assertEqual(last_sync, "2026-01-01T00:00:00+00:00")
+
+    def test_no_such_key_returns_empty(self):
+        from botocore.exceptions import ClientError
+
+        err = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}, "GetObject"
+        )
+        with patch.object(flask_app.s3, "get_object", side_effect=err):
+            posts, last_sync = flask_app.load_posts()
+
+        self.assertEqual(posts, [])
+        self.assertIsNone(last_sync)
+
+    def test_unexpected_client_error_raises(self):
+        from botocore.exceptions import ClientError
+
+        err = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "Denied"}}, "GetObject"
+        )
+        with patch.object(flask_app.s3, "get_object", side_effect=err):
+            with self.assertRaises(ClientError):
+                flask_app.load_posts()
+
+
+# ---------------------------------------------------------------------------
+# app.py — Flask API routes
+# ---------------------------------------------------------------------------
+
+
+class TestFlaskRoutes(unittest.TestCase):
+    def setUp(self):
+        flask_app.app.config["TESTING"] = True
+        self.client = flask_app.app.test_client()
+        # Pre-populate in-memory cache with known data.
+        with flask_app._cache_lock:
+            flask_app._ALL_POSTS = list(SAMPLE_POSTS["posts"].values())
+            flask_app._ALL_POSTS.sort(
+                key=lambda p: p.get("post_date", ""), reverse=True
+            )
+            flask_app._LAST_SYNC = SAMPLE_POSTS["last_sync"]
+
+    def test_images_api_returns_batch(self):
+        res = self.client.get("/api/images?offset=0")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIsInstance(data, list)
+
+    def test_images_api_offset(self):
+        res = self.client.get("/api/images?offset=1")
+        data = res.get_json()
+        # offset=1 on a 2-item list should return 1 item
+        self.assertEqual(len(data), 1)
+
+    def test_images_api_offset_past_end(self):
+        res = self.client.get("/api/images?offset=100")
+        data = res.get_json()
+        self.assertEqual(data, [])
+
+    def test_search_returns_matching_posts(self):
+        res = self.client.get("/api/search?q=first")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["title"], "First Post")
+
+    def test_search_is_case_insensitive(self):
+        res = self.client.get("/api/search?q=FIRST")
+        data = res.get_json()
+        self.assertEqual(len(data), 1)
+
+    def test_search_empty_query_returns_empty(self):
+        res = self.client.get("/api/search?q=")
+        data = res.get_json()
+        self.assertEqual(data, [])
+
+    def test_search_no_match_returns_empty(self):
+        res = self.client.get("/api/search?q=zzznomatch")
+        data = res.get_json()
+        self.assertEqual(data, [])
+
+    def test_sync_status_uses_in_memory_state(self):
+        # Should NOT hit R2 — if s3.get_object is called, the test fails.
+        with patch.object(
+            flask_app.s3,
+            "get_object",
+            side_effect=AssertionError("R2 should not be called"),
+        ):
+            res = self.client.get("/api/sync/status")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["total"], 2)
+        self.assertEqual(data["last_sync"], SAMPLE_POSTS["last_sync"])
+
+    def test_sync_requires_token_when_configured(self):
+        original = flask_app.SYNC_TOKEN
+        try:
+            flask_app.SYNC_TOKEN = "secret"
+            res = self.client.post("/api/sync")
+            self.assertEqual(res.status_code, 401)
+        finally:
+            flask_app.SYNC_TOKEN = original
+
+    def test_sync_accepts_valid_token(self):
+        original = flask_app.SYNC_TOKEN
+        try:
+            flask_app.SYNC_TOKEN = "secret"
+            # Mock the subprocess so we don't actually run image_downloader.py.
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = "ok"
+            with (
+                patch("subprocess.run", return_value=mock_result),
+                patch.object(flask_app, "_refresh_cache"),
+            ):
+                res = self.client.post("/api/sync", headers={"X-Sync-Token": "secret"})
+            self.assertEqual(res.status_code, 200)
+            self.assertTrue(res.get_json()["ok"])
+        finally:
+            flask_app.SYNC_TOKEN = original
+
+    def test_sync_returns_500_on_nonzero_exit(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "something went wrong"
+        with patch("subprocess.run", return_value=mock_result):
+            res = self.client.post("/api/sync")
+        self.assertEqual(res.status_code, 500)
+        self.assertFalse(res.get_json()["ok"])
+
+
+# ---------------------------------------------------------------------------
+# image_downloader.py — safe_get() retry logic
+# ---------------------------------------------------------------------------
+
+
+class TestSafeGet(unittest.TestCase):
+    def test_returns_response_on_200(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with patch.object(image_downloader._session, "get", return_value=mock_resp):
+            result = image_downloader.safe_get("http://example.com")
+        self.assertEqual(result, mock_resp)
+
+    def test_returns_none_on_non_200(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        with patch.object(image_downloader._session, "get", return_value=mock_resp):
+            result = image_downloader.safe_get("http://example.com")
+        self.assertIsNone(result)
+
+    def test_retries_on_429(self):
+        resp_429 = MagicMock()
+        resp_429.status_code = 429
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        with (
+            patch.object(
+                image_downloader._session, "get", side_effect=[resp_429, resp_200]
+            ),
+            patch("time.sleep"),
+        ):
+            result = image_downloader.safe_get("http://example.com", retries=3)
+        self.assertEqual(result, resp_200)
+
+    def test_returns_none_after_all_retries_exhausted(self):
+        with (
+            patch.object(
+                image_downloader._session, "get", side_effect=ConnectionError("timeout")
+            ),
+            patch("time.sleep"),
+        ):
+            result = image_downloader.safe_get("http://example.com", retries=2)
+        self.assertIsNone(result)
+
+
+if __name__ == "__main__":
+    unittest.main()

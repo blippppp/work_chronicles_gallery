@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff pytest
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run tests
+        run: pytest tests.py -v
+        env:
+          R2_ACCOUNT_ID: test-account
+          R2_BUCKET: test-bucket
+          R2_ACCESS_KEY: test-key
+          R2_SECRET_KEY: test-secret
+          R2_PUBLIC_URL: https://cdn.example.com
+          SYNC_TOKEN: ""

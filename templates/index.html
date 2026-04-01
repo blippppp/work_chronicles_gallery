@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Chronicles Gallery</title>
+
+    <style>
+        body {
+            background: #111;
+            color: white;
+            font-family: Arial;
+            padding: 20px;
+        }
+
+        @media (max-width: 767px) {
+            body {
+                padding: 10px;
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header h2 { margin: 0 0 8px; }
+
+        .status-bar {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 12px;
+        }
+
+        .sync-btn {
+            background: #9D6FFF;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .sync-btn:hover { background: #8355e0; }
+        .sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .search-box {
+            display: block;
+            margin: 0 auto 20px;
+            padding: 10px;
+            width: min(300px, 90%);
+            border-radius: 6px;
+            border: none;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+
+        @media (max-width: 767px) {
+            .grid {
+                grid-template-columns: repeat(1, 1fr);
+                gap: 8px;
+            }
+        }
+
+        .img-container {
+            width: 100%;
+            background: #222;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            position: relative;
+        }
+
+        .img-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+            cursor: pointer;
+        }
+
+        .img-container .tooltip {
+            display: none;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.85);
+            color: #fff;
+            padding: 8px 10px;
+            font-size: 13px;
+            text-align: center;
+            border-radius: 0 0 8px 8px;
+            pointer-events: none;
+        }
+
+        .img-container:hover .tooltip,
+        .img-container:active .tooltip {
+            display: block;
+        }
+
+        .img-container .title-label {
+            display: none;
+            font-size: 12px;
+            color: #aaa;
+            text-align: center;
+            padding: 4px 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        @media (max-width: 767px) {
+            .img-container .title-label {
+                display: block;
+            }
+            .img-container .tooltip {
+                display: none !important;
+            }
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            background: rgba(0,0,0,0.95);
+            width: 100%;
+            height: 100%;
+            top: 0;
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal img {
+            max-width: 95%;
+            max-height: 85vh;
+            display: block;
+            object-fit: contain;
+        }
+
+        .nav-btn {
+            position: absolute;
+            top: 50%;
+            font-size: 40px;
+            cursor: pointer;
+            padding: 20px;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        @media (max-width: 767px) {
+            .nav-btn {
+                font-size: 32px;
+                padding: 15px;
+            }
+        }
+
+        .prev { left: 10px; }
+        .next { right: 10px; }
+
+        .loader {
+            text-align: center;
+            padding: 20px;
+            color: #aaa;
+            display: none;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 1; }
+            100% { opacity: 0.3; }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="header">
+    <h2>Work Chronicles Gallery</h2>
+    <div class="status-bar">
+        <span id="status-text">{{ total }} images</span>
+        {% if last_sync %}
+        &middot; Synced: {{ last_sync[:19] }}
+        {% endif %}
+    </div>
+    <button class="sync-btn" id="sync-btn" onclick="triggerSync()">Sync</button>
+</div>
+
+<input class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)">
+
+<div class="grid" id="gallery"></div>
+
+<div class="loader" id="loader">Loading...</div>
+
+<div id="modal" class="modal">
+    <span class="nav-btn prev" onclick="prevImage()">&#10094;</span>
+    <img id="modal-img" alt="">
+    <span class="nav-btn next" onclick="nextImage()">&#10095;</span>
+</div>
+
+<script>
+const R2_BASE_URL = {{ r2_base_url | tojson }};
+// Initial batch is server-rendered — no extra network round-trip needed.
+const INITIAL_POSTS = {{ posts | tojson }};
+let offset = INITIAL_POSTS.length;
+let loading = false;
+let currentList = [];
+let currentIndex = 0;
+let searchMode = false;
+let debounceTimer;
+
+function showLoader(text) {
+    const loader = document.getElementById("loader");
+    loader.style.display = "block";
+    loader.innerText = text;
+}
+
+function hideLoader() {
+    document.getElementById("loader").style.display = "none";
+}
+
+/**
+ * Render posts into the gallery.
+ * @param {Array} posts
+ * @param {boolean} append - if true, append to existing gallery; otherwise replace.
+ */
+function renderImages(posts, append = false) {
+    const gallery = document.getElementById("gallery");
+    if (!append) gallery.innerHTML = "";
+
+    posts.forEach(post => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "img-container";
+
+        const el = document.createElement("img");
+        el.src = R2_BASE_URL + "/" + post.id + "." + (post.ext || "jpg");
+        el.loading = "lazy";
+        el.onclick = () => openModal(post);
+
+        const tooltip = document.createElement("div");
+        tooltip.className = "tooltip";
+        tooltip.innerText = post.title;
+
+        const label = document.createElement("div");
+        label.className = "title-label";
+        label.innerText = post.title;
+
+        wrapper.appendChild(el);
+        wrapper.appendChild(tooltip);
+        wrapper.appendChild(label);
+        gallery.appendChild(wrapper);
+    });
+}
+
+// Render the server-provided initial batch immediately — no fetch needed.
+currentList = INITIAL_POSTS;
+renderImages(INITIAL_POSTS);
+
+async function loadMore() {
+    if (loading || searchMode) return;
+
+    loading = true;
+    showLoader("Loading more...");
+
+    const res = await fetch(`/api/images?offset=${offset}`);
+    const data = await res.json();
+
+    if (data.length === 0) {
+        showLoader("End");
+        return;
+    }
+
+    renderImages(data, true);
+    currentList = currentList.concat(data);
+
+    offset += data.length;
+
+    loading = false;
+    hideLoader();
+}
+
+let _scrollScheduled = false;
+window.addEventListener("scroll", () => {
+    if (_scrollScheduled) return;
+    _scrollScheduled = true;
+    requestAnimationFrame(() => {
+        _scrollScheduled = false;
+        if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) {
+            loadMore();
+        }
+    });
+}, { passive: true });
+
+function handleSearch(query) {
+    clearTimeout(debounceTimer);
+
+    debounceTimer = setTimeout(async () => {
+        if (!query) {
+            searchMode = false;
+            currentList = INITIAL_POSTS;
+            offset = INITIAL_POSTS.length;
+            renderImages(INITIAL_POSTS);
+            return;
+        }
+
+        searchMode = true;
+        showLoader("Searching...");
+
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+
+        currentList = data;
+        renderImages(data);
+
+        hideLoader();
+
+    }, 300);
+}
+
+function openModal(post) {
+    document.getElementById("modal").style.display = "flex";
+    currentIndex = currentList.findIndex(p => p.id === post.id);
+    updateModal();
+}
+
+function updateModal() {
+    const post = currentList[currentIndex];
+    document.getElementById("modal-img").src =
+        R2_BASE_URL + "/" + post.id + "." + (post.ext || "jpg");
+}
+
+function nextImage() {
+    currentIndex = (currentIndex + 1) % currentList.length;
+    updateModal();
+}
+
+function prevImage() {
+    currentIndex = (currentIndex - 1 + currentList.length) % currentList.length;
+    updateModal();
+}
+
+document.getElementById("modal").onclick = function(e) {
+    if (e.target.id === "modal") {
+        this.style.display = "none";
+    }
+};
+
+document.addEventListener("keydown", (e) => {
+    if (document.getElementById("modal").style.display === "flex") {
+        if (e.key === "ArrowRight") nextImage();
+        if (e.key === "ArrowLeft") prevImage();
+        if (e.key === "Escape") document.getElementById("modal").style.display = "none";
+    }
+});
+
+async function triggerSync() {
+    const btn = document.getElementById("sync-btn");
+    btn.disabled = true;
+    btn.innerText = "Syncing...";
+    showLoader("Syncing new images...");
+
+    try {
+        const res = await fetch("/api/sync", { method: "POST" });
+        const data = await res.json();
+
+        if (data.ok) {
+            document.getElementById("status-text").innerText = data.total + " images";
+            // Re-fetch updated first batch after sync
+            const imgRes = await fetch("/api/images?offset=0");
+            const imgData = await imgRes.json();
+            currentList = imgData;
+            offset = imgData.length;
+            renderImages(imgData);
+        } else {
+            alert("Sync failed: " + data.error);
+        }
+    } catch (e) {
+        alert("Sync error: " + e.message);
+    }
+
+    btn.disabled = false;
+    btn.innerText = "Sync";
+}
+</script>
+
+</body>
+</html>
