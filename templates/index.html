@@ -24,13 +24,7 @@
             margin-bottom: 20px;
         }
 
-        .header h2 { margin: 0 0 8px; }
-
-        .status-bar {
-            font-size: 13px;
-            color: #888;
-            margin-bottom: 12px;
-        }
+        .header h2 { margin: 0; }
 
         .search-box {
             display: block;
@@ -170,12 +164,6 @@
 
 <div class="header">
     <h2>Work Chronicles Gallery</h2>
-    <div class="status-bar">
-        <span id="status-text">{{ total }} images</span>
-        {% if last_sync %}
-        &middot; Synced: {{ last_sync[:19] }}
-        {% endif %}
-    </div>
 </div>
 
 <input class="search-box" placeholder="Search by title..." oninput="handleSearch(this.value)">

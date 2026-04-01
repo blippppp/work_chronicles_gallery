@@ -86,12 +86,11 @@ class TestLoadPosts(unittest.TestCase):
         with patch.object(
             flask_app.s3, "get_object", return_value=_make_r2_response(SAMPLE_POSTS)
         ):
-            posts, last_sync = flask_app.load_posts()
+            posts = flask_app.load_posts()
 
         self.assertEqual(len(posts), 2)
         self.assertEqual(posts[0]["id"], 2, "Newest post should come first")
         self.assertEqual(posts[1]["id"], 1)
-        self.assertEqual(last_sync, "2026-01-01T00:00:00+00:00")
 
     def test_no_such_key_returns_empty(self):
         from botocore.exceptions import ClientError
@@ -100,10 +99,9 @@ class TestLoadPosts(unittest.TestCase):
             {"Error": {"Code": "NoSuchKey", "Message": "Not found"}}, "GetObject"
         )
         with patch.object(flask_app.s3, "get_object", side_effect=err):
-            posts, last_sync = flask_app.load_posts()
+            posts = flask_app.load_posts()
 
         self.assertEqual(posts, [])
-        self.assertIsNone(last_sync)
 
     def test_unexpected_client_error_raises(self):
         from botocore.exceptions import ClientError
@@ -131,7 +129,6 @@ class TestFlaskRoutes(unittest.TestCase):
             flask_app._ALL_POSTS.sort(
                 key=lambda p: p.get("post_date", ""), reverse=True
             )
-            flask_app._LAST_SYNC = SAMPLE_POSTS["last_sync"]
 
     def test_images_api_returns_batch(self):
         res = self.client.get("/api/images?offset=0")
@@ -183,7 +180,6 @@ class TestFlaskRoutes(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertEqual(data["total"], 2)
-        self.assertEqual(data["last_sync"], SAMPLE_POSTS["last_sync"])
 
     def test_sync_requires_token_when_configured(self):
         original = flask_app.SYNC_TOKEN

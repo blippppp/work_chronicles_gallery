@@ -40,11 +40,10 @@ s3 = boto3.client(
 # (Redis / SQLite) if strict cross-worker consistency is required.
 _cache_lock = threading.Lock()
 _ALL_POSTS: list = []
-_LAST_SYNC: str | None = None
 
 
-def load_posts() -> tuple[list, str | None]:
-    """Fetch posts.json from R2 and return (posts_list, last_sync).
+def load_posts() -> list:
+    """Fetch posts.json from R2 and return posts_list.
 
     Raises ClientError for unexpected errors (non-NoSuchKey) so callers
     can decide how to handle them.
@@ -54,23 +53,22 @@ def load_posts() -> tuple[list, str | None]:
         data = json.loads(res["Body"].read())
         posts = list(data.get("posts", {}).values())
         posts.sort(key=lambda p: p.get("post_date", ""), reverse=True)
-        return posts, data.get("last_sync")
+        return posts
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code == "NoSuchKey":
             # Not yet synced — expected on first run.
-            return [], None
+            return []
         app.logger.error("R2 load_posts error (%s): %s", code, e)
         raise
 
 
 def _refresh_cache() -> None:
     """Re-read R2 and update the in-memory cache under the lock."""
-    posts, last_sync = load_posts()
+    posts = load_posts()
     with _cache_lock:
-        global _ALL_POSTS, _LAST_SYNC
+        global _ALL_POSTS
         _ALL_POSTS = posts
-        _LAST_SYNC = last_sync
 
 
 # Populate cache at startup (errors here are intentionally fatal).
@@ -81,14 +79,11 @@ _refresh_cache()
 def index():
     with _cache_lock:
         posts = _ALL_POSTS
-        last_sync = _LAST_SYNC
     first_batch = posts[:BATCH_SIZE]
     return render_template(
         "index.html",
         posts=first_batch,
         r2_base_url=R2_PUBLIC_URL,
-        last_sync=last_sync,
-        total=len(posts),
     )
 
 
@@ -115,8 +110,7 @@ def sync_status():
     """Returns current in-memory state — no R2 round-trip."""
     with _cache_lock:
         total = len(_ALL_POSTS)
-        last_sync = _LAST_SYNC
-    return jsonify({"total": total, "last_sync": last_sync})
+    return jsonify({"total": total})
 
 
 @app.route("/api/sync", methods=["POST"])
@@ -147,12 +141,10 @@ def trigger_sync():
         _refresh_cache()
         with _cache_lock:
             total = len(_ALL_POSTS)
-            last_sync = _LAST_SYNC
         return jsonify(
             {
                 "ok": True,
                 "total": total,
-                "last_sync": last_sync,
                 "output": result.stdout[-500:] if result.stdout else "",
             }
         )
