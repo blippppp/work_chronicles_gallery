@@ -900,7 +900,17 @@ document.addEventListener("keydown", (e) => {
     if (document.getElementById("modal").style.display === "flex") {
         if (e.key === "ArrowRight") nextImage();
         if (e.key === "ArrowLeft") prevImage();
-        if (e.key === "Escape") document.getElementById("modal").style.display = "none";
+        if (e.key === "Escape") {
+            document.getElementById("modal").style.display = "none";
+            // Return to landing page after closing modal from suggestion
+            const searchBox = document.getElementById("search-box");
+            if (searchBox && searchBox.value) {
+                searchBox.value = "";
+                document.getElementById("search-clear").classList.remove("visible");
+                closeSuggestions();
+                showCategories();
+            }
+        }
     }
 });
 

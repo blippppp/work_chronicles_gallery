@@ -786,7 +786,27 @@ document.addEventListener("keydown", (e) => {
     if (document.getElementById("modal").style.display === "flex") {
         if (e.key === "ArrowRight") nextImage();
         if (e.key === "ArrowLeft") prevImage();
-        if (e.key === "Escape") document.getElementById("modal").style.display = "none";
+        if (e.key === "Escape") {
+            document.getElementById("modal").style.display = "none";
+            // Return to landing page after closing modal from suggestion
+            const searchBox = document.getElementById("search-box");
+            if (searchBox && searchBox.value) {
+                searchBox.value = "";
+                document.getElementById("search-clear").classList.remove("visible");
+                closeSuggestions();
+                // Reset to show all comics
+                const subtitle = document.getElementById("subtitle");
+                searchMode = false;
+                _searchList = null;
+                const gallery = document.getElementById("gallery");
+                gallery.innerHTML = "";
+                offset = 0;
+                exhausted = false;
+                _loadedPosts = [];
+                subtitle.textContent = "All {{ total }} comics";
+                loadNextBatch();
+            }
+        }
     }
 });
 
