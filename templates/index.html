@@ -702,19 +702,7 @@ function clearSearch() {
 // ── AI Suggestions ────────────────────────────────────────────────────────
 
 function showThinking() {
-    const dd = document.getElementById("suggest-dropdown");
-    dd.innerHTML = `
-        <div class="suggest-header">
-            <span class="ai-badge"><span class="ai-badge-dot"></span>AI</span>
-            <span class="suggest-label">thinking&hellip;</span>
-        </div>
-        <div class="suggest-thinking">
-            <div class="suggest-thinking-dots">
-                <span></span><span></span><span></span>
-            </div>
-        </div>
-    `;
-    dd.classList.add("open");
+    showLoader("AI thinking...");
     activeIdx = -1;
 }
 
@@ -734,6 +722,7 @@ async function fetchSuggestions(query) {
     } catch (e) {
         if (e.name !== "AbortError") {
             closeSuggestions();
+            runSearch(query);
         }
     }
 }
@@ -765,38 +754,19 @@ function highlightMatch(phrase, query) {
 }
 
 function renderSuggestions(query, suggestions) {
-    const dd = document.getElementById("suggest-dropdown");
-
     if (!suggestions.length) {
-        closeSuggestions();
+        runSearch(query);
         return;
     }
-
-    let html = `
-        <div class="suggest-header">
-            <span class="ai-badge"><span class="ai-badge-dot"></span>AI</span>
-            <span class="suggest-label">semantic matches</span>
-        </div>
-    `;
-
-    suggestions.forEach((s, i) => {
-        const phrase = bestPhrase(s, query);
-        const highlighted = phrase ? highlightMatch(phrase, query) : "";
-        const thumb = `${R2_BASE_URL}/${s.id}.${s.ext || "jpg"}`;
-        html += `
-            <div class="suggest-item" data-idx="${i}" onmousedown="selectSuggestion(${i})">
-                <img class="suggest-thumb" src="${thumb}" alt="" loading="lazy">
-                <div class="suggest-text">
-                    <div class="suggest-title">${escapeHtml(s.title)}</div>
-                    ${highlighted ? `<div class="suggest-phrase">${highlighted}</div>` : ""}
-                </div>
-                ${s.category ? `<span class="suggest-cat">${escapeHtml(s.category)}</span>` : ""}
-            </div>
-        `;
-    });
-
-    dd.innerHTML = html;
-    dd.classList.add("open");
+    searchMode = true;
+    _searchList = suggestions;
+    document.getElementById("categories-view").classList.add("hidden");
+    document.getElementById("gallery-view").classList.add("active");
+    document.getElementById("view-title").textContent = `AI: "${query}"`;
+    document.getElementById("view-count").textContent =
+        `(${suggestions.length} result${suggestions.length !== 1 ? "s" : ""})`;
+    renderImages(suggestions);
+    hideLoader();
     activeIdx = -1;
 }
 
@@ -804,6 +774,7 @@ function closeSuggestions() {
     const dd = document.getElementById("suggest-dropdown");
     dd.classList.remove("open");
     dd.innerHTML = "";
+    hideLoader();
     activeIdx = -1;
     currentSuggestions = [];
 }

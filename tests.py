@@ -7,7 +7,7 @@ Run with:
 import json
 import os
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 # Provide dummy env vars before importing app so it doesn't crash on startup.
 os.environ.setdefault("R2_ACCOUNT_ID", "test-account")
