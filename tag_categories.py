@@ -1,6 +1,8 @@
 """One-time script to add categories to existing posts.json in R2."""
 
-import os, json, logging
+import json
+import logging
+import os
 from dotenv import load_dotenv
 import boto3
 from botocore.client import Config
