@@ -546,10 +546,11 @@ function handleSearchInput(query) {
         suggestTimer = setTimeout(() => fetchSuggestions(query), 350);
     } else {
         closeSuggestions();
-        // Gallery search: debounce 500ms
-        clearTimeout(_searchDebounce);
-        _searchDebounce = setTimeout(() => runSearch(query), 500);
     }
+
+    // Gallery search: debounce 500ms
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => runSearch(query), 500);
 }
 
 async function runSearch(query) {
@@ -615,6 +616,7 @@ async function fetchSuggestions(query) {
     } catch (e) {
         if (e.name !== "AbortError") {
             closeSuggestions();
+            runSearch(query);
         }
     }
 }
